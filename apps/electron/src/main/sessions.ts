@@ -495,9 +495,32 @@ export class SessionManager {
    * marked as unread when assistant completes - if user is viewing it, don't mark unread.
    */
   private activeViewingSession: Map<string, string> = new Map()
+  /**
+   * Main-process event listeners (for AutomationManager, etc.)
+   * These receive the same SessionEvent objects that are sent to renderer windows.
+   */
+  private mainProcessEventListeners: Array<(event: SessionEvent, workspaceId?: string) => void> = []
 
   setWindowManager(wm: WindowManager): void {
     this.windowManager = wm
+  }
+
+  /**
+   * Register a listener for session events in the main process.
+   * Used by AutomationManager to track automation session completion.
+   */
+  addMainProcessEventListener(listener: (event: SessionEvent, workspaceId?: string) => void): void {
+    this.mainProcessEventListeners.push(listener)
+  }
+
+  /**
+   * Remove a main-process event listener.
+   */
+  removeMainProcessEventListener(listener: (event: SessionEvent, workspaceId?: string) => void): void {
+    const index = this.mainProcessEventListeners.indexOf(listener)
+    if (index !== -1) {
+      this.mainProcessEventListeners.splice(index, 1)
+    }
   }
 
   /**
@@ -3673,6 +3696,15 @@ To view this task's output:
   }
 
   private sendEvent(event: SessionEvent, workspaceId?: string): void {
+    // Dispatch to main-process listeners (AutomationManager, etc.)
+    for (const listener of this.mainProcessEventListeners) {
+      try {
+        listener(event, workspaceId)
+      } catch {
+        // Don't let listener errors break event dispatch
+      }
+    }
+
     if (!this.windowManager) {
       sessionLog.warn('Cannot send event - no window manager')
       return

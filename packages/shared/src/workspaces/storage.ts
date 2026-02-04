@@ -87,6 +87,14 @@ export function getWorkspaceSkillsPath(rootPath: string): string {
   return join(rootPath, 'skills');
 }
 
+/**
+ * Get path to workspace automations directory
+ * @param rootPath - Absolute path to workspace root folder
+ */
+export function getWorkspaceAutomationsPath(rootPath: string): string {
+  return join(rootPath, 'automations');
+}
+
 // ============================================================
 // Config Operations
 // ============================================================

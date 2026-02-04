@@ -8,6 +8,7 @@ import { execSync } from 'child_process'
 import { SessionManager } from './sessions'
 import { ipcLog, windowLog, searchLog } from './logger'
 import { WindowManager } from './window-manager'
+import type { AutomationManager } from './automations/automation-manager'
 import { registerOnboardingHandlers } from './onboarding'
 import { IPC_CHANNELS, type FileAttachment, type StoredAttachment, type AuthType, type ApiSetupInfo, type SendMessageOptions } from '../shared/types'
 import { readFileAttachment, perf, validateImageForClaudeAPI, IMAGE_LIMITS } from '@craft-agent/shared/utils'
@@ -116,7 +117,7 @@ async function validateFilePath(filePath: string): Promise<string> {
   return realPath
 }
 
-export function registerIpcHandlers(sessionManager: SessionManager, windowManager: WindowManager): void {
+export function registerIpcHandlers(sessionManager: SessionManager, windowManager: WindowManager, automationManager?: AutomationManager): void {
   // Get all sessions
   ipcMain.handle(IPC_CHANNELS.GET_SESSIONS, async () => {
     const end = perf.start('ipc.getSessions')
@@ -2535,5 +2536,173 @@ export function registerIpcHandlers(sessionManager: SessionManager, windowManage
 
   // Note: Permission mode cycling settings (cyclablePermissionModes) are now workspace-level
   // and managed via WORKSPACE_SETTINGS_GET/UPDATE channels
+
+  // ============================================================
+  // Automations (Workspace-scoped)
+  // ============================================================
+
+  // List all automations for a workspace
+  ipcMain.handle(IPC_CHANNELS.AUTOMATIONS_LIST, async (_event, workspaceId: string) => {
+    ipcLog.info(`AUTOMATIONS_LIST: Loading automations for workspace: ${workspaceId}`)
+    const workspace = getWorkspaceByNameOrId(workspaceId)
+    if (!workspace) {
+      ipcLog.error(`AUTOMATIONS_LIST: Workspace not found: ${workspaceId}`)
+      return []
+    }
+    const { loadAutomations } = await import('@craft-agent/shared/automations')
+    return loadAutomations(workspace.rootPath)
+  })
+
+  // Get a single automation
+  ipcMain.handle(IPC_CHANNELS.AUTOMATIONS_GET, async (_event, workspaceId: string, automationId: string) => {
+    const workspace = getWorkspaceByNameOrId(workspaceId)
+    if (!workspace) return null
+    const { getAutomation } = await import('@craft-agent/shared/automations')
+    return getAutomation(workspace.rootPath, automationId)
+  })
+
+  // Create a new automation
+  ipcMain.handle(IPC_CHANNELS.AUTOMATIONS_CREATE, async (_event, workspaceId: string, input: import('@craft-agent/shared/automations').CreateAutomationInput) => {
+    const workspace = getWorkspaceByNameOrId(workspaceId)
+    if (!workspace) throw new Error('Workspace not found')
+    const { createAutomation, loadAutomations } = await import('@craft-agent/shared/automations')
+    const automation = createAutomation(workspace.rootPath, workspaceId, input)
+    ipcLog.info(`AUTOMATIONS_CREATE: Created automation "${automation.name}" (${automation.id})`)
+    // Broadcast change to all windows
+    windowManager.broadcastToAll(IPC_CHANNELS.AUTOMATIONS_CHANGED, loadAutomations(workspace.rootPath))
+    return automation
+  })
+
+  // Update an automation
+  ipcMain.handle(IPC_CHANNELS.AUTOMATIONS_UPDATE, async (_event, workspaceId: string, automationId: string, input: import('@craft-agent/shared/automations').UpdateAutomationInput) => {
+    const workspace = getWorkspaceByNameOrId(workspaceId)
+    if (!workspace) throw new Error('Workspace not found')
+    const { updateAutomation, loadAutomations } = await import('@craft-agent/shared/automations')
+    const automation = updateAutomation(workspace.rootPath, automationId, input)
+    if (automation) {
+      windowManager.broadcastToAll(IPC_CHANNELS.AUTOMATIONS_CHANGED, loadAutomations(workspace.rootPath))
+      // Refresh trigger registration if trigger config or enabled state changed
+      automationManager?.refreshTrigger(workspaceId, automationId)
+    }
+    return automation
+  })
+
+  // Delete an automation
+  ipcMain.handle(IPC_CHANNELS.AUTOMATIONS_DELETE, async (_event, workspaceId: string, automationId: string) => {
+    const workspace = getWorkspaceByNameOrId(workspaceId)
+    if (!workspace) throw new Error('Workspace not found')
+    const { deleteAutomation, loadAutomations } = await import('@craft-agent/shared/automations')
+    // Unregister trigger before deleting
+    automationManager?.refreshTrigger(workspaceId, automationId)
+    const result = deleteAutomation(workspace.rootPath, automationId)
+    if (result) {
+      ipcLog.info(`AUTOMATIONS_DELETE: Deleted automation ${automationId}`)
+      windowManager.broadcastToAll(IPC_CHANNELS.AUTOMATIONS_CHANGED, loadAutomations(workspace.rootPath))
+    }
+    return result
+  })
+
+  // Duplicate an automation
+  ipcMain.handle(IPC_CHANNELS.AUTOMATIONS_DUPLICATE, async (_event, workspaceId: string, automationId: string) => {
+    const workspace = getWorkspaceByNameOrId(workspaceId)
+    if (!workspace) throw new Error('Workspace not found')
+    const { duplicateAutomation, loadAutomations } = await import('@craft-agent/shared/automations')
+    const automation = duplicateAutomation(workspace.rootPath, automationId)
+    if (automation) {
+      windowManager.broadcastToAll(IPC_CHANNELS.AUTOMATIONS_CHANGED, loadAutomations(workspace.rootPath))
+      // Duplicates start disabled, no trigger registration needed
+    }
+    return automation
+  })
+
+  // Enable an automation
+  ipcMain.handle(IPC_CHANNELS.AUTOMATIONS_ENABLE, async (_event, workspaceId: string, automationId: string) => {
+    const workspace = getWorkspaceByNameOrId(workspaceId)
+    if (!workspace) throw new Error('Workspace not found')
+    const { enableAutomation, loadAutomations } = await import('@craft-agent/shared/automations')
+    const automation = enableAutomation(workspace.rootPath, automationId)
+    if (automation) {
+      windowManager.broadcastToAll(IPC_CHANNELS.AUTOMATIONS_CHANGED, loadAutomations(workspace.rootPath))
+      // Register trigger for newly enabled automation
+      automationManager?.refreshTrigger(workspaceId, automationId)
+    }
+    return automation
+  })
+
+  // Disable an automation
+  ipcMain.handle(IPC_CHANNELS.AUTOMATIONS_DISABLE, async (_event, workspaceId: string, automationId: string) => {
+    const workspace = getWorkspaceByNameOrId(workspaceId)
+    if (!workspace) throw new Error('Workspace not found')
+    const { disableAutomation, loadAutomations } = await import('@craft-agent/shared/automations')
+    const automation = disableAutomation(workspace.rootPath, automationId)
+    if (automation) {
+      windowManager.broadcastToAll(IPC_CHANNELS.AUTOMATIONS_CHANGED, loadAutomations(workspace.rootPath))
+      // Unregister trigger for disabled automation
+      automationManager?.refreshTrigger(workspaceId, automationId)
+    }
+    return automation
+  })
+
+  // Run an automation manually
+  ipcMain.handle(IPC_CHANNELS.AUTOMATIONS_RUN_NOW, async (_event, workspaceId: string, automationId: string) => {
+    if (automationManager) {
+      const run = await automationManager.executeAutomation(workspaceId, automationId, 'manual')
+      ipcLog.info(`AUTOMATIONS_RUN_NOW: Started manual run ${run.id}`)
+      return run
+    }
+    // Fallback if AutomationManager not available (shouldn't happen)
+    const workspace = getWorkspaceByNameOrId(workspaceId)
+    if (!workspace) throw new Error('Workspace not found')
+    const { createRun, getAutomation } = await import('@craft-agent/shared/automations')
+    const automation = getAutomation(workspace.rootPath, automationId)
+    if (!automation) throw new Error('Automation not found')
+    const run = createRun(workspace.rootPath, automationId, 'manual')
+    ipcLog.info(`AUTOMATIONS_RUN_NOW: Started run ${run.id} (no AutomationManager)`)
+    windowManager.broadcastToAll(IPC_CHANNELS.AUTOMATION_EVENT, { type: 'run_started', run })
+    return run
+  })
+
+  // Cancel a running automation
+  ipcMain.handle(IPC_CHANNELS.AUTOMATIONS_CANCEL_RUN, async (_event, workspaceId: string, runId: string) => {
+    if (automationManager) {
+      return automationManager.cancelRun(workspaceId, runId)
+    }
+    // Fallback if AutomationManager not available
+    const workspace = getWorkspaceByNameOrId(workspaceId)
+    if (!workspace) throw new Error('Workspace not found')
+    const { updateRun } = await import('@craft-agent/shared/automations')
+    const run = updateRun(workspace.rootPath, runId, {
+      status: 'cancelled',
+      completedAt: new Date().toISOString(),
+    })
+    if (run) {
+      windowManager.broadcastToAll(IPC_CHANNELS.AUTOMATION_EVENT, { type: 'run_cancelled', run })
+    }
+    return !!run
+  })
+
+  // List runs for an automation
+  ipcMain.handle(IPC_CHANNELS.AUTOMATIONS_RUNS_LIST, async (_event, workspaceId: string, automationId: string) => {
+    const workspace = getWorkspaceByNameOrId(workspaceId)
+    if (!workspace) return []
+    const { loadRuns } = await import('@craft-agent/shared/automations')
+    return loadRuns(workspace.rootPath, automationId)
+  })
+
+  // Get a single run
+  ipcMain.handle(IPC_CHANNELS.AUTOMATIONS_RUNS_GET, async (_event, workspaceId: string, runId: string) => {
+    const workspace = getWorkspaceByNameOrId(workspaceId)
+    if (!workspace) return null
+    const { getRun } = await import('@craft-agent/shared/automations')
+    return getRun(workspace.rootPath, runId)
+  })
+
+  // Delete a run
+  ipcMain.handle(IPC_CHANNELS.AUTOMATIONS_RUNS_DELETE, async (_event, workspaceId: string, runId: string) => {
+    const workspace = getWorkspaceByNameOrId(workspaceId)
+    if (!workspace) return false
+    const { deleteRun } = await import('@craft-agent/shared/automations')
+    return deleteRun(workspace.rootPath, runId)
+  })
 
 }

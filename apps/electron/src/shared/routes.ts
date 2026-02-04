@@ -150,6 +150,12 @@ export const routes = {
       return `skills/skill/${skillSlug}` as const
     },
 
+    /** Automations view (automations navigator). Pass an ID for detail view. */
+    automations: (automationId?: string) => {
+      if (!automationId) return 'automations' as const
+      return `automations/automation/${automationId}` as const
+    },
+
     /** Settings view (settings navigator) */
     settings: (subpage?: 'app' | 'appearance' | 'input' | 'workspace' | 'permissions' | 'labels' | 'shortcuts' | 'preferences') =>
       subpage && subpage !== 'app'

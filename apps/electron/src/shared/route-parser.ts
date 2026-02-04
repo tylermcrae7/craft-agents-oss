@@ -34,7 +34,7 @@ export interface ParsedRoute {
 // Compound Route Types (new format)
 // =============================================================================
 
-export type NavigatorType = 'chats' | 'sources' | 'skills' | 'settings'
+export type NavigatorType = 'chats' | 'sources' | 'skills' | 'automations' | 'settings'
 
 export interface ParsedCompoundRoute {
   /** The navigator type */
@@ -58,7 +58,7 @@ export interface ParsedCompoundRoute {
  * Known prefixes that indicate a compound route
  */
 const COMPOUND_ROUTE_PREFIXES = [
-  'allChats', 'flagged', 'state', 'label', 'view', 'sources', 'skills', 'settings'
+  'allChats', 'flagged', 'state', 'label', 'view', 'sources', 'skills', 'automations', 'settings'
 ]
 
 /**
@@ -155,6 +155,23 @@ export function parseCompoundRoute(route: string): ParsedCompoundRoute | null {
     return null
   }
 
+  // Automations navigator
+  if (first === 'automations') {
+    if (segments.length === 1) {
+      return { navigator: 'automations', details: null }
+    }
+
+    // automations/automation/{automationId}
+    if (segments[1] === 'automation' && segments[2]) {
+      return {
+        navigator: 'automations',
+        details: { type: 'automation', id: segments[2] },
+      }
+    }
+
+    return null
+  }
+
   // Chats navigator (allChats, flagged, state)
   let chatFilter: ChatFilter
   let detailsStartIndex: number
@@ -231,6 +248,11 @@ export function buildCompoundRoute(parsed: ParsedCompoundRoute): string {
   if (parsed.navigator === 'skills') {
     if (!parsed.details) return 'skills'
     return `skills/skill/${parsed.details.id}`
+  }
+
+  if (parsed.navigator === 'automations') {
+    if (!parsed.details) return 'automations'
+    return `automations/automation/${parsed.details.id}`
   }
 
   // Chats navigator
@@ -343,6 +365,14 @@ function convertCompoundToViewRoute(compound: ParsedCompoundRoute): ParsedRoute 
       return { type: 'view', name: 'skills', params: {} }
     }
     return { type: 'view', name: 'skill-info', id: compound.details.id, params: {} }
+  }
+
+  // Automations
+  if (compound.navigator === 'automations') {
+    if (!compound.details) {
+      return { type: 'view', name: 'automations', params: {} }
+    }
+    return { type: 'view', name: 'automation-info', id: compound.details.id, params: {} }
   }
 
   // Chats
@@ -462,6 +492,17 @@ function convertCompoundToNavigationState(compound: ParsedCompoundRoute): Naviga
     }
   }
 
+  // Automations
+  if (compound.navigator === 'automations') {
+    if (!compound.details) {
+      return { navigator: 'automations', details: null }
+    }
+    return {
+      navigator: 'automations',
+      details: { type: 'automation', automationId: compound.details.id },
+    }
+  }
+
   // Chats
   const filter = compound.chatFilter || { kind: 'allChats' as const }
   if (compound.details) {
@@ -526,6 +567,19 @@ function convertParsedRouteToNavigationState(parsed: ParsedRoute): NavigationSta
         }
       }
       return { navigator: 'skills', details: null }
+    case 'automations':
+      return { navigator: 'automations', details: null }
+    case 'automation-info':
+      if (parsed.id) {
+        return {
+          navigator: 'automations',
+          details: {
+            type: 'automation',
+            automationId: parsed.id,
+          },
+        }
+      }
+      return { navigator: 'automations', details: null }
     case 'chat':
       if (parsed.id) {
         // Reconstruct filter from params
@@ -616,6 +670,13 @@ export function buildRouteFromNavigationState(state: NavigationState): string {
       return `skills/skill/${state.details.skillSlug}`
     }
     return 'skills'
+  }
+
+  if (state.navigator === 'automations') {
+    if (state.details?.type === 'automation') {
+      return `automations/automation/${state.details.automationId}`
+    }
+    return 'automations'
   }
 
   // Chats

@@ -307,6 +307,54 @@ const api: ElectronAPI = {
     }
   },
 
+  // Automations
+  listAutomations: (workspaceId: string) =>
+    ipcRenderer.invoke(IPC_CHANNELS.AUTOMATIONS_LIST, workspaceId),
+  getAutomation: (workspaceId: string, automationId: string) =>
+    ipcRenderer.invoke(IPC_CHANNELS.AUTOMATIONS_GET, workspaceId, automationId),
+  createAutomation: (workspaceId: string, input: import('@craft-agent/shared/automations').CreateAutomationInput) =>
+    ipcRenderer.invoke(IPC_CHANNELS.AUTOMATIONS_CREATE, workspaceId, input),
+  updateAutomation: (workspaceId: string, automationId: string, input: import('@craft-agent/shared/automations').UpdateAutomationInput) =>
+    ipcRenderer.invoke(IPC_CHANNELS.AUTOMATIONS_UPDATE, workspaceId, automationId, input),
+  deleteAutomation: (workspaceId: string, automationId: string) =>
+    ipcRenderer.invoke(IPC_CHANNELS.AUTOMATIONS_DELETE, workspaceId, automationId),
+  duplicateAutomation: (workspaceId: string, automationId: string) =>
+    ipcRenderer.invoke(IPC_CHANNELS.AUTOMATIONS_DUPLICATE, workspaceId, automationId),
+  enableAutomation: (workspaceId: string, automationId: string) =>
+    ipcRenderer.invoke(IPC_CHANNELS.AUTOMATIONS_ENABLE, workspaceId, automationId),
+  disableAutomation: (workspaceId: string, automationId: string) =>
+    ipcRenderer.invoke(IPC_CHANNELS.AUTOMATIONS_DISABLE, workspaceId, automationId),
+  runAutomationNow: (workspaceId: string, automationId: string) =>
+    ipcRenderer.invoke(IPC_CHANNELS.AUTOMATIONS_RUN_NOW, workspaceId, automationId),
+  cancelAutomationRun: (workspaceId: string, runId: string) =>
+    ipcRenderer.invoke(IPC_CHANNELS.AUTOMATIONS_CANCEL_RUN, workspaceId, runId),
+  listAutomationRuns: (workspaceId: string, automationId: string) =>
+    ipcRenderer.invoke(IPC_CHANNELS.AUTOMATIONS_RUNS_LIST, workspaceId, automationId),
+  getAutomationRun: (workspaceId: string, runId: string) =>
+    ipcRenderer.invoke(IPC_CHANNELS.AUTOMATIONS_RUNS_GET, workspaceId, runId),
+  deleteAutomationRun: (workspaceId: string, runId: string) =>
+    ipcRenderer.invoke(IPC_CHANNELS.AUTOMATIONS_RUNS_DELETE, workspaceId, runId),
+  // Automations change listener
+  onAutomationsChanged: (callback: (automations: import('@craft-agent/shared/automations').Automation[]) => void) => {
+    const handler = (_event: Electron.IpcRendererEvent, automations: import('@craft-agent/shared/automations').Automation[]) => {
+      callback(automations)
+    }
+    ipcRenderer.on(IPC_CHANNELS.AUTOMATIONS_CHANGED, handler)
+    return () => {
+      ipcRenderer.removeListener(IPC_CHANNELS.AUTOMATIONS_CHANGED, handler)
+    }
+  },
+  // Automation event listener (run status changes)
+  onAutomationEvent: (callback: (event: import('@craft-agent/shared/automations').AutomationEvent) => void) => {
+    const handler = (_event: Electron.IpcRendererEvent, automationEvent: import('@craft-agent/shared/automations').AutomationEvent) => {
+      callback(automationEvent)
+    }
+    ipcRenderer.on(IPC_CHANNELS.AUTOMATION_EVENT, handler)
+    return () => {
+      ipcRenderer.removeListener(IPC_CHANNELS.AUTOMATION_EVENT, handler)
+    }
+  },
+
   // Statuses change listener (live updates when statuses config or icon files change)
   onStatusesChanged: (callback: (workspaceId: string) => void) => {
     const handler = (_event: Electron.IpcRendererEvent, workspaceId: string) => {

@@ -81,6 +81,7 @@ import log, { isDebugMode, mainLog, getLogFilePath } from './logger'
 import { setPerfEnabled, enableDebug } from '@craft-agent/shared/utils'
 import { initNotificationService, clearBadgeCount, initBadgeIcon, initInstanceBadge } from './notifications'
 import { checkForUpdatesOnLaunch, setWindowManager as setAutoUpdateWindowManager, isUpdating } from './auto-update'
+import { AutomationManager } from './automations/automation-manager'
 
 // Initialize electron-log for renderer process support
 log.initialize()
@@ -98,6 +99,7 @@ const DEEPLINK_SCHEME = process.env.CRAFT_DEEPLINK_SCHEME || 'craftagents'
 
 let windowManager: WindowManager | null = null
 let sessionManager: SessionManager | null = null
+let automationManager: AutomationManager | null = null
 
 // Store pending deep link if app not ready yet (cold start)
 let pendingDeepLink: string | null = null
@@ -128,7 +130,7 @@ app.on('open-url', (event, url) => {
   mainLog.info('Received deeplink:', url)
 
   if (windowManager) {
-    handleDeepLink(url, windowManager).catch(err => {
+    handleDeepLink(url, windowManager, automationManager).catch(err => {
       mainLog.error('Failed to handle deep link:', err)
     })
   } else {
@@ -148,7 +150,7 @@ if (!gotTheLock) {
     const url = commandLine.find(arg => arg.startsWith(`${DEEPLINK_SCHEME}://`))
     if (url && windowManager) {
       mainLog.info('Received deeplink from second instance:', url)
-      handleDeepLink(url, windowManager).catch(err => {
+      handleDeepLink(url, windowManager, automationManager).catch(err => {
         mainLog.error('Failed to handle deep link:', err)
       })
     } else if (windowManager) {
@@ -264,8 +266,12 @@ app.whenReady().then(async () => {
     // Initialize notification service
     initNotificationService(windowManager)
 
+    // Initialize automation manager (before IPC handlers so it can be passed to them)
+    automationManager = new AutomationManager(sessionManager, windowManager)
+    automationManager.initialize()
+
     // Register IPC handlers (must happen before window creation)
-    registerIpcHandlers(sessionManager, windowManager)
+    registerIpcHandlers(sessionManager, windowManager, automationManager)
 
     // Create initial windows (restores from saved state or opens first workspace)
     await createInitialWindows()
@@ -301,7 +307,7 @@ app.whenReady().then(async () => {
     // Process pending deep link from cold start
     if (pendingDeepLink) {
       mainLog.info('Processing pending deep link:', pendingDeepLink)
-      await handleDeepLink(pendingDeepLink, windowManager)
+      await handleDeepLink(pendingDeepLink, windowManager, automationManager)
       pendingDeepLink = null
     }
 
@@ -364,6 +370,11 @@ app.on('before-quit', async (event) => {
       lastFocusedWorkspaceId,
     })
     mainLog.info('Saved window state:', windows.length, 'windows')
+  }
+
+  // Clean up automation manager (cancel active runs, remove listeners)
+  if (automationManager) {
+    automationManager.cleanup()
   }
 
   // Flush all pending session writes before quitting

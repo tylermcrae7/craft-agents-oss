@@ -739,6 +739,27 @@ export const IPC_CHANNELS = {
   // Git operations
   GET_GIT_BRANCH: 'git:getBranch',
 
+  // Automations CRUD
+  AUTOMATIONS_LIST: 'automations:list',
+  AUTOMATIONS_GET: 'automations:get',
+  AUTOMATIONS_CREATE: 'automations:create',
+  AUTOMATIONS_UPDATE: 'automations:update',
+  AUTOMATIONS_DELETE: 'automations:delete',
+  AUTOMATIONS_DUPLICATE: 'automations:duplicate',
+  // Automation Control
+  AUTOMATIONS_ENABLE: 'automations:enable',
+  AUTOMATIONS_DISABLE: 'automations:disable',
+  AUTOMATIONS_RUN_NOW: 'automations:run-now',
+  AUTOMATIONS_CANCEL_RUN: 'automations:cancel-run',
+  // Run History
+  AUTOMATIONS_RUNS_LIST: 'automations:runs:list',
+  AUTOMATIONS_RUNS_GET: 'automations:runs:get',
+  AUTOMATIONS_RUNS_DELETE: 'automations:runs:delete',
+  // Real-time Events (main -> renderer)
+  AUTOMATION_EVENT: 'automation:event',
+  // Automations change listener (sources-style broadcast)
+  AUTOMATIONS_CHANGED: 'automations:changed',
+
   // Git Bash (Windows)
   GITBASH_CHECK: 'gitbash:check',
   GITBASH_BROWSE: 'gitbash:browse',
@@ -951,6 +972,25 @@ export interface ElectronAPI {
 
   // Skills change listener (live updates when skills are added/removed/modified)
   onSkillsChanged(callback: (skills: LoadedSkill[]) => void): () => void
+
+  // Automations (workspace-scoped)
+  listAutomations(workspaceId: string): Promise<import('@craft-agent/shared/automations').Automation[]>
+  getAutomation(workspaceId: string, automationId: string): Promise<import('@craft-agent/shared/automations').Automation | null>
+  createAutomation(workspaceId: string, input: import('@craft-agent/shared/automations').CreateAutomationInput): Promise<import('@craft-agent/shared/automations').Automation>
+  updateAutomation(workspaceId: string, automationId: string, input: import('@craft-agent/shared/automations').UpdateAutomationInput): Promise<import('@craft-agent/shared/automations').Automation | null>
+  deleteAutomation(workspaceId: string, automationId: string): Promise<boolean>
+  duplicateAutomation(workspaceId: string, automationId: string): Promise<import('@craft-agent/shared/automations').Automation | null>
+  enableAutomation(workspaceId: string, automationId: string): Promise<import('@craft-agent/shared/automations').Automation | null>
+  disableAutomation(workspaceId: string, automationId: string): Promise<import('@craft-agent/shared/automations').Automation | null>
+  runAutomationNow(workspaceId: string, automationId: string): Promise<import('@craft-agent/shared/automations').AutomationRun>
+  cancelAutomationRun(workspaceId: string, runId: string): Promise<boolean>
+  listAutomationRuns(workspaceId: string, automationId: string): Promise<import('@craft-agent/shared/automations').AutomationRun[]>
+  getAutomationRun(workspaceId: string, runId: string): Promise<import('@craft-agent/shared/automations').AutomationRun | null>
+  deleteAutomationRun(workspaceId: string, runId: string): Promise<boolean>
+  // Automations change listener (live updates)
+  onAutomationsChanged(callback: (automations: import('@craft-agent/shared/automations').Automation[]) => void): () => void
+  // Automation event listener (run status changes)
+  onAutomationEvent(callback: (event: import('@craft-agent/shared/automations').AutomationEvent) => void): () => void
 
   // Statuses (workspace-scoped)
   listStatuses(workspaceId: string): Promise<import('@craft-agent/shared/statuses').StatusConfig[]>
@@ -1204,6 +1244,17 @@ export interface SkillsNavigationState {
 }
 
 /**
+ * Automations navigation state - shows AutomationsListPanel in navigator
+ */
+export interface AutomationsNavigationState {
+  navigator: 'automations'
+  /** Selected automation details or null for empty state */
+  details: { type: 'automation'; automationId: string } | null
+  /** Optional right sidebar panel state */
+  rightSidebar?: RightSidebarPanel
+}
+
+/**
  * Unified navigation state - single source of truth for all 3 panels
  *
  * From this state we can derive:
@@ -1216,6 +1267,7 @@ export type NavigationState =
   | SourcesNavigationState
   | SettingsNavigationState
   | SkillsNavigationState
+  | AutomationsNavigationState
 
 /**
  * Type guard to check if state is chats navigation
@@ -1246,6 +1298,13 @@ export const isSkillsNavigation = (
 ): state is SkillsNavigationState => state.navigator === 'skills'
 
 /**
+ * Type guard to check if state is automations navigation
+ */
+export const isAutomationsNavigation = (
+  state: NavigationState
+): state is AutomationsNavigationState => state.navigator === 'automations'
+
+/**
  * Default navigation state - allChats with no selection
  */
 export const DEFAULT_NAVIGATION_STATE: NavigationState = {
@@ -1269,6 +1328,12 @@ export const getNavigationStateKey = (state: NavigationState): string => {
       return `skills/skill/${state.details.skillSlug}`
     }
     return 'skills'
+  }
+  if (state.navigator === 'automations') {
+    if (state.details?.type === 'automation') {
+      return `automations/automation/${state.details.automationId}`
+    }
+    return 'automations'
   }
   if (state.navigator === 'settings') {
     return `settings:${state.subpage}`
@@ -1309,6 +1374,16 @@ export const parseNavigationStateKey = (key: string): NavigationState | null => 
       return { navigator: 'skills', details: { type: 'skill', skillSlug } }
     }
     return { navigator: 'skills', details: null }
+  }
+
+  // Handle automations
+  if (key === 'automations') return { navigator: 'automations', details: null }
+  if (key.startsWith('automations/automation/')) {
+    const automationId = key.slice(22)
+    if (automationId) {
+      return { navigator: 'automations', details: { type: 'automation', automationId } }
+    }
+    return { navigator: 'automations', details: null }
   }
 
   // Handle settings

@@ -48,6 +48,7 @@
     "./version": "./src/version/index.ts",
     "./branding": "./src/branding.ts",
     "./network-interceptor": "./src/network-interceptor.ts",
+    "./automations": "./src/automations/index.ts",
     "./search": "./src/search/index.ts"
   },
   "dependencies": {

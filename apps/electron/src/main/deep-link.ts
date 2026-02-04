@@ -37,6 +37,7 @@
 import type { BrowserWindow } from 'electron'
 import { mainLog } from './logger'
 import type { WindowManager } from './window-manager'
+import type { AutomationManager } from './automations/automation-manager'
 import { IPC_CHANNELS } from '../shared/types'
 
 export interface DeepLinkTarget {
@@ -114,7 +115,7 @@ export function parseDeepLink(url: string): DeepLinkTarget | null {
 
     // Compound route prefixes
     const COMPOUND_ROUTE_PREFIXES = [
-      'allChats', 'flagged', 'state', 'sources', 'settings', 'skills'
+      'allChats', 'flagged', 'state', 'sources', 'settings', 'skills', 'automations'
     ]
 
     // craftagents://allChats/..., craftagents://settings/..., etc. (compound routes)
@@ -233,7 +234,8 @@ function buildDeepLinkWithoutWindowParam(url: string): string {
  */
 export async function handleDeepLink(
   url: string,
-  windowManager: WindowManager
+  windowManager: WindowManager,
+  automationManager?: AutomationManager | null,
 ): Promise<DeepLinkResult> {
   const target = parseDeepLink(url)
 
@@ -246,6 +248,40 @@ export async function handleDeepLink(
   }
 
   mainLog.info('[DeepLink] Handling:', target)
+
+  // Handle automation deep links: craftagents://action/run-automation/{automationId}
+  if (target.action === 'run-automation' && target.actionParams?.id && automationManager) {
+    const automationId = target.actionParams.id
+    mainLog.info('[DeepLink] Triggering automation run:', automationId)
+    try {
+      // Determine workspace from target or first available window
+      let wsId = target.workspaceId
+      if (!wsId) {
+        const focusedWindow = windowManager.getFocusedWindow()
+        if (focusedWindow) {
+          wsId = windowManager.getWorkspaceForWindow(focusedWindow.webContents.id) ?? undefined
+        }
+        if (!wsId) {
+          const allWindows = windowManager.getAllWindows()
+          if (allWindows.length > 0) {
+            wsId = allWindows[0].workspaceId
+          }
+        }
+      }
+      if (!wsId) {
+        return { success: false, error: 'No workspace available for automation' }
+      }
+      await automationManager.executeAutomation(wsId, automationId, 'deep-link', {
+        url,
+        firedAt: new Date().toISOString(),
+      })
+      return { success: true }
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error)
+      mainLog.error('[DeepLink] Failed to run automation:', message)
+      return { success: false, error: message }
+    }
+  }
 
   // If windowMode is set, create a new window instead of navigating in existing
   if (target.windowMode) {
